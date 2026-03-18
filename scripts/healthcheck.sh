@@ -16,7 +16,7 @@ command -v jq >/dev/null 2>&1 || { echo "jq not found"; exit 1; }
 
 # Check NGINX
 echo -n "Testing NGINX... "
-if curl -s -f -o /dev/null http://localhost/; then
+if curl -s -f -o /dev/null http://localhost/health; then
     echo "OK"
 else
     echo "FAIL"

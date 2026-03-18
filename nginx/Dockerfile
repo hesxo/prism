@@ -15,6 +15,10 @@ RUN mkdir -p /var/log/nginx && \
     touch /var/log/nginx/access.log && \
     touch /var/log/nginx/error.log
 
+# NGINX writes a PID file to /run/nginx.pid by default. When running as a
+# non-root user, ensure /run is writable (or the PID is redirected).
+RUN mkdir -p /run && chown -R nginx:nginx /run
+
 # Set permissions
 RUN chown -R nginx:nginx /var/log/nginx && \
     chown -R nginx:nginx /var/cache/nginx && \
