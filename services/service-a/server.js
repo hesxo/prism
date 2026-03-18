@@ -95,7 +95,7 @@ app.get('/', (req, res) => {
             .find(iface => iface.family === 'IPv4' && !iface.internal)?.address || 'unknown',
         version: process.env.npm_package_version || '1.0.0',
         timestamp: new Date().toISOString(),
-        message: '🌈 Hello from the Red service! Part of the Prism spectrum.',
+        message: 'Hello from the Red service! Part of the Prism spectrum.',
         endpoints: {
             health: '/health',
             ready: '/ready',
