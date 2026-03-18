@@ -11,6 +11,16 @@ const SERVICE_NAME = process.env.SERVICE_NAME || 'Service A (Red)';
 const SERVICE_COLOR = '\x1b[31m'; // Red
 const RESET_COLOR = '\x1b[0m';
 
+// Some sandboxed environments can make `os.networkInterfaces()` throw.
+// Keep the service resilient so `/` and `/metrics` don't hard-fail.
+const safeNetworkInterfaces = () => {
+    try {
+        return os.networkInterfaces() || {};
+    } catch (e) {
+        return {};
+    }
+};
+
 // Middleware
 app.use(helmet()); // Security headers
 app.use(cors()); // CORS support
@@ -63,7 +73,7 @@ app.get('/metrics', (req, res) => {
         },
         network: {
             hostname: os.hostname(),
-            interfaces: Object.keys(os.networkInterfaces())
+            interfaces: Object.keys(safeNetworkInterfaces())
         },
         process: {
             pid: process.pid,
@@ -90,7 +100,7 @@ app.get('/', (req, res) => {
         service: SERVICE_NAME,
         color: 'red',
         hostname: os.hostname(),
-        hostip: Object.values(os.networkInterfaces())
+        hostip: Object.values(safeNetworkInterfaces())
             .flat()
             .find(iface => iface.family === 'IPv4' && !iface.internal)?.address || 'unknown',
         version: process.env.npm_package_version || '1.0.0',
@@ -138,28 +148,26 @@ app.use((req, res) => {
 });
 
 // Start server
-const server = app.listen(PORT, () => {
-    console.log(`${SERVICE_COLOR}✨ ${SERVICE_NAME}${RESET_COLOR} listening on port ${PORT}`);
-    console.log(`   📍 Health: http://localhost:${PORT}/health`);
-    console.log(`   📊 Metrics: http://localhost:${PORT}/metrics`);
-    console.log(`   🔍 Version: http://localhost:${PORT}/version`);
-});
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-    console.log(`${SERVICE_COLOR}🛑 ${SERVICE_NAME} shutting down...${RESET_COLOR}`);
-    server.close(() => {
-        console.log(`${SERVICE_COLOR}👋 ${SERVICE_NAME} gracefully terminated${RESET_COLOR}`);
-        process.exit(0);
+let server;
+if (require.main === module) {
+    server = app.listen(PORT, () => {
+        console.log(`${SERVICE_COLOR}✨ ${SERVICE_NAME}${RESET_COLOR} listening on port ${PORT}`);
+        console.log(`   📍 Health: http://localhost:${PORT}/health`);
+        console.log(`   📊 Metrics: http://localhost:${PORT}/metrics`);
+        console.log(`   🔍 Version: http://localhost:${PORT}/version`);
     });
-});
 
-process.on('SIGINT', () => {
-    console.log(`${SERVICE_COLOR}🛑 ${SERVICE_NAME} interrupted...${RESET_COLOR}`);
-    server.close(() => {
-        console.log(`${SERVICE_COLOR}👋 ${SERVICE_NAME} gracefully terminated${RESET_COLOR}`);
-        process.exit(0);
-    });
-});
+    const shutdown = (signal) => {
+        console.log(`${SERVICE_COLOR}🛑 ${SERVICE_NAME} ${signal}...${RESET_COLOR}`);
+        server.close(() => {
+            console.log(`${SERVICE_COLOR}👋 ${SERVICE_NAME} gracefully terminated${RESET_COLOR}`);
+            process.exit(0);
+        });
+    };
+
+    // Graceful shutdown (only when run directly)
+    process.on('SIGTERM', () => shutdown('shutting down'));
+    process.on('SIGINT', () => shutdown('interrupted'));
+}
 
 module.exports = app; // For testing
