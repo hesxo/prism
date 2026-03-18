@@ -1,0 +1,111 @@
+version: '3.8'
+
+networks:
+  prism-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+
+services:
+  # Reverse Proxy - The Prism
+  nginx:
+    build: ./nginx
+    ports:
+      - "80:80"
+    depends_on:
+      service-a:
+        condition: service_healthy
+      service-b:
+        condition: service_healthy
+    networks:
+      - prism-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Service A - Red Team (2 replicas for load balancing demo)
+  service-a:
+    build: ./services/service-a
+    deploy:
+      replicas: 2
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - SERVICE_NAME=Service A (Red)
+    networks:
+      - prism-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Service B - Blue Team (2 replicas)
+  service-b:
+    build: ./services/service-b
+    deploy:
+      replicas: 2
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - SERVICE_NAME=Service B (Blue)
+    networks:
+      - prism-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Basic monitoring for now (we'll expand in Phase 3)
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: prism-cadvisor
+    ports:
+      - "8080:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    devices:
+      - /dev/kmsg
+    privileged: true
+    networks:
+      - prism-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
