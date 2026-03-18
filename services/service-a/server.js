@@ -60,28 +60,39 @@ app.get('/ready', (req, res) => {
     });
 });
 
-// Metrics endpoint (for Prometheus)
+// Metrics endpoint (Prometheus exposition format)
 app.get('/metrics', (req, res) => {
-    res.json({
-        service: SERVICE_NAME,
-        uptime: process.uptime(),
-        memory: process.memoryUsage(),
-        cpu: {
-            count: os.cpus().length,
-            loadavg: os.loadavg(),
-            model: os.cpus()[0]?.model || 'unknown'
-        },
-        network: {
-            hostname: os.hostname(),
-            interfaces: Object.keys(safeNetworkInterfaces())
-        },
-        process: {
-            pid: process.pid,
-            versions: process.versions,
-            platform: process.platform,
-            arch: process.arch
-        }
-    });
+    const loadavg = os.loadavg ? os.loadavg() : [0, 0, 0];
+    const load1 = Number(loadavg[0]) || 0;
+    const load5 = Number(loadavg[1]) || 0;
+    const load15 = Number(loadavg[2]) || 0;
+
+    const mem = process.memoryUsage();
+    const ifaceCount = Object.keys(safeNetworkInterfaces()).length;
+
+    // Minimal set of metrics in text format so Prometheus scrape succeeds.
+    // (Grafana "Service Status" uses `up{job="service-a"}`.)
+    const metrics = [
+        '# TYPE prism_service_uptime_seconds gauge',
+        `prism_service_uptime_seconds{service="${SERVICE_NAME}"} ${process.uptime()}`,
+        '# TYPE prism_service_memory_heap_used_bytes gauge',
+        `prism_service_memory_heap_used_bytes{service="${SERVICE_NAME}"} ${mem.heapUsed}`,
+        '# TYPE prism_service_memory_rss_bytes gauge',
+        `prism_service_memory_rss_bytes{service="${SERVICE_NAME}"} ${mem.rss}`,
+        '# TYPE prism_service_cpu_count gauge',
+        `prism_service_cpu_count{service="${SERVICE_NAME}"} ${os.cpus().length}`,
+        '# TYPE prism_service_loadavg_1 gauge',
+        `prism_service_loadavg_1{service="${SERVICE_NAME}"} ${load1}`,
+        '# TYPE prism_service_loadavg_5 gauge',
+        `prism_service_loadavg_5{service="${SERVICE_NAME}"} ${load5}`,
+        '# TYPE prism_service_loadavg_15 gauge',
+        `prism_service_loadavg_15{service="${SERVICE_NAME}"} ${load15}`,
+        '# TYPE prism_service_network_interfaces gauge',
+        `prism_service_network_interfaces{service="${SERVICE_NAME}"} ${ifaceCount}`
+    ].join('\n');
+
+    res.setHeader('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+    res.status(200).send(metrics + '\n');
 });
 
 // Version endpoint

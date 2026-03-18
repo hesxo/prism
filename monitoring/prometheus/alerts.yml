@@ -1,0 +1,84 @@
+groups:
+  - name: prism_alerts
+    interval: 30s
+    rules:
+      # Service availability alerts
+      - alert: ServiceADown
+        expr: up{job="service-a"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: red
+        annotations:
+          summary: "Service A (Red Team) is down"
+          description: "Service A has been down for more than 1 minute."
+
+      - alert: ServiceBDown
+        expr: up{job="service-b"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: blue
+        annotations:
+          summary: "Service B (Blue Team) is down"
+          description: "Service B has been down for more than 1 minute."
+
+      - alert: NginxDown
+        expr: up{job="nginx"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          component: proxy
+        annotations:
+          summary: "NGINX reverse proxy is down"
+          description: "The Prism gateway is unavailable."
+
+      # High traffic alerts
+      - alert: HighTrafficServiceA
+        expr: rate(container_network_receive_bytes_total{name=~".*service-a.*"}[5m]) > 10e6
+        for: 5m
+        labels:
+          severity: warning
+          team: red
+        annotations:
+          summary: "High traffic on Service A"
+          description: "Service A is receiving >10MB/s for 5 minutes."
+
+      - alert: HighTrafficServiceB
+        expr: rate(container_network_receive_bytes_total{name=~".*service-b.*"}[5m]) > 10e6
+        for: 5m
+        labels:
+          severity: warning
+          team: blue
+        annotations:
+          summary: "High traffic on Service B"
+          description: "Service B is receiving >10MB/s for 5 minutes."
+
+      # Resource usage alerts
+      - alert: HighCPUUsage
+        expr: sum(rate(container_cpu_usage_seconds_total{container_label_com_docker_compose_service!=""}[5m])) by (container_label_com_docker_compose_service) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage on {{ $labels.container_label_com_docker_compose_service }}"
+          description: "CPU usage is above 80% for 5 minutes."
+
+      - alert: HighMemoryUsage
+        expr: container_memory_usage_bytes{container_label_com_docker_compose_service!=""} / container_spec_memory_limit_bytes{container_label_com_docker_compose_service!=""} > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on {{ $labels.container_label_com_docker_compose_service }}"
+          description: "Memory usage is above 85% of limit."
+
+      - alert: ContainerRestarting
+        expr: increase(container_restarts_total{container_label_com_docker_compose_service!=""}[15m]) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.container_label_com_docker_compose_service }} is restarting frequently"
+          description: "Container has restarted multiple times in the last 15 minutes."
+

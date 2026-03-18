@@ -1,0 +1,97 @@
+# Prometheus Configuration for Prism Platform
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'prism'
+    environment: 'production'
+
+# Alerting configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+          # We'll add Alertmanager later if needed
+
+# Rule files
+rule_files:
+  - "alerts.yml"
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          service: 'monitoring'
+          component: 'prometheus'
+
+  # NGINX metrics
+  - job_name: 'nginx'
+    scrape_interval: 10s
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['nginx-exporter:9113']
+        labels:
+          service: 'reverse-proxy'
+          component: 'nginx'
+    # Uses nginx-prometheus-exporter to convert /nginx_status into Prometheus metrics
+
+  # Node.js services (via cAdvisor)
+  - job_name: 'cadvisor'
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['cadvisor:8080']
+        labels:
+          service: 'container-metrics'
+          component: 'cadvisor'
+
+  # Service A metrics endpoint
+  - job_name: 'service-a'
+    scrape_interval: 10s
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['service-a:3000']
+        labels:
+          service: 'backend'
+          team: 'red'
+          version: '1.0.0'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        regex: '(.*):.*'
+        replacement: '${1}'
+
+  # Service B metrics endpoint
+  - job_name: 'service-b'
+    scrape_interval: 10s
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['service-b:3000']
+        labels:
+          service: 'backend'
+          team: 'blue'
+          version: '1.0.0'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        regex: '(.*):.*'
+        replacement: '${1}'
+
+  # Docker daemon metrics (if enabled)
+  - job_name: 'docker'
+    static_configs:
+      - targets: ['host.docker.internal:9323']
+        labels:
+          service: 'container-runtime'
+          component: 'docker'
+
+  # Node exporter for host metrics (optional)
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']
+        labels:
+          service: 'host'
+          component: 'node-exporter'
+

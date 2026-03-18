@@ -11,6 +11,7 @@ volumes:
   prometheus-data:
   grafana-data:
   loki-data:
+  grafana-dashboards:
 
 services:
   # Reverse Proxy - The Prism
@@ -38,7 +39,7 @@ services:
       retries: 3
       start_period: 10s
 
-  # Service A - Red Team (2 replicas for load balancing demo)
+  # Service A - Red Team
   service-a:
     build: ./services/service-a
     deploy:
@@ -55,14 +56,19 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+        labels: "service=service-a,team=red"
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
+    labels:
+      - "service=service-a"
+      - "team=red"
+      - "version=1.0.0"
 
-  # Service B - Blue Team (2 replicas)
+  # Service B - Blue Team
   service-b:
     build: ./services/service-b
     deploy:
@@ -79,14 +85,147 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+        labels: "service=service-b,team=blue"
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
+    labels:
+      - "service=service-b"
+      - "team=blue"
+      - "version=1.0.0"
 
-  # Basic monitoring for now (we'll expand in Phase 3)
+  # Prometheus - Metrics Collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prism-prometheus
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      - '--storage.tsdb.retention.time=30d'
+    ports:
+      - "9090:9090"
+    networks:
+      - prism-network
+    restart: unless-stopped
+    depends_on:
+      - cadvisor
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Grafana - Visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: prism-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3001
+      - GF_LOG_LEVEL=info
+    volumes:
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - grafana-data:/var/lib/grafana
+      - grafana-dashboards:/var/lib/grafana/dashboards
+    networks:
+      - prism-network
+    depends_on:
+      - prometheus
+      - loki
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Loki - Log Aggregation
+  loki:
+    image: grafana/loki:latest
+    container_name: prism-loki
+    command: -config.file=/etc/loki/loki-config.yml
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./monitoring/loki/loki-config.yml:/etc/loki/loki-config.yml
+      - loki-data:/loki
+    networks:
+      - prism-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3100/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Promtail - Collect Docker logs and ship to Loki
+  promtail:
+    image: grafana/promtail:latest
+    container_name: prism-promtail
+    command: -config.file=/etc/promtail/promtail-config.yml
+    volumes:
+      - ./monitoring/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml
+      - /var/run:/var/run:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    networks:
+      - prism-network
+    restart: unless-stopped
+    depends_on:
+      - loki
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # nginx-prometheus-exporter exposes Prometheus-formatted metrics for NGINX
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:latest
+    container_name: prism-nginx-exporter
+    command:
+      - "--nginx.scrape-uri=http://nginx/nginx_status"
+    networks:
+      - prism-network
+    restart: unless-stopped
+    depends_on:
+      - nginx
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Basic monitoring - existing container-level metrics
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:latest
     container_name: prism-cadvisor
