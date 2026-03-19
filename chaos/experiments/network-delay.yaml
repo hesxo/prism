@@ -1,0 +1,20 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: network-delay-experiment
+  namespace: prism
+spec:
+  action: delay
+  mode: all
+  duration: "60s"
+  selector:
+    namespaces:
+      - prism
+    labelSelectors:
+      app: service-b
+  delay:
+    latency: "2000ms"
+    correlation: "100"
+    jitter: "0ms"
+  scheduler:
+    cron: "@every 15m"

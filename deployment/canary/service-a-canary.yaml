@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service-a-canary
+  namespace: prism
+  labels:
+    app: service-a
+    version: canary
+    track: canary
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: service-a
+      track: canary
+  template:
+    metadata:
+      labels:
+        app: service-a
+        version: canary
+        track: canary
+    spec:
+      containers:
+      - name: service-a
+        image: prism-service-a:canary
+        ports:
+        - containerPort: 3000
+        env:
+        - name: SERVICE_NAME
+          value: "Service A (Canary)"
+        - name: VERSION
+          value: "canary"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3000

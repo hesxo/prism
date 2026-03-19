@@ -1,0 +1,19 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: StressChaos
+metadata:
+  name: cpu-stress-experiment
+  namespace: prism
+spec:
+  mode: one
+  duration: "120s"
+  selector:
+    namespaces:
+      - prism
+    labelSelectors:
+      app: service-a
+  stressors:
+    cpu:
+      workers: 2
+      load: 80
+  scheduler:
+    cron: "@every 20m"

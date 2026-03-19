@@ -3,82 +3,98 @@ groups:
     interval: 30s
     rules:
       # Service availability alerts
-      - alert: ServiceADown
-        expr: up{job="service-a"} == 0
+      - alert: PrismServiceDown
+        expr: up{job=~"service-a|service-b"} == 0
         for: 1m
         labels:
           severity: critical
-          team: red
+          team: platform
         annotations:
-          summary: "Service A (Red Team) is down"
-          description: "Service A has been down for more than 1 minute."
+          summary: "{{ $labels.job }} is down"
+          description: "{{ $labels.job }} has been down for more than 1 minute."
+          runbook: "https://github.com/yourusername/prism/wiki/Runbook-ServiceDown"
 
-      - alert: ServiceBDown
-        expr: up{job="service-b"} == 0
-        for: 1m
-        labels:
-          severity: critical
-          team: blue
-        annotations:
-          summary: "Service B (Blue Team) is down"
-          description: "Service B has been down for more than 1 minute."
-
-      - alert: NginxDown
+      - alert: PrismProxyDown
         expr: up{job="nginx"} == 0
         for: 30s
         labels:
           severity: critical
-          component: proxy
+          team: platform
         annotations:
           summary: "NGINX reverse proxy is down"
-          description: "The Prism gateway is unavailable."
+          description: "The Prism gateway is unavailable. Check NGINX container."
+          runbook: "https://github.com/yourusername/prism/wiki/Runbook-ProxyDown"
 
-      # High traffic alerts
-      - alert: HighTrafficServiceA
-        expr: rate(container_network_receive_bytes_total{name=~".*service-a.*"}[5m]) > 10e6
-        for: 5m
-        labels:
-          severity: warning
-          team: red
-        annotations:
-          summary: "High traffic on Service A"
-          description: "Service A is receiving >10MB/s for 5 minutes."
-
-      - alert: HighTrafficServiceB
-        expr: rate(container_network_receive_bytes_total{name=~".*service-b.*"}[5m]) > 10e6
-        for: 5m
-        labels:
-          severity: warning
-          team: blue
-        annotations:
-          summary: "High traffic on Service B"
-          description: "Service B is receiving >10MB/s for 5 minutes."
-
-      # Resource usage alerts
+      # Performance alerts
       - alert: HighCPUUsage
-        expr: sum(rate(container_cpu_usage_seconds_total{container_label_com_docker_compose_service!=""}[5m])) by (container_label_com_docker_compose_service) > 0.8
+        expr: sum(rate(container_cpu_usage_seconds_total{container_label_com_docker_compose_service=~"service-a|service-b"}[5m])) by (container_label_com_docker_compose_service) * 100 > 80
         for: 5m
         labels:
           severity: warning
+          team: platform
         annotations:
           summary: "High CPU usage on {{ $labels.container_label_com_docker_compose_service }}"
           description: "CPU usage is above 80% for 5 minutes."
 
       - alert: HighMemoryUsage
-        expr: container_memory_usage_bytes{container_label_com_docker_compose_service!=""} / container_spec_memory_limit_bytes{container_label_com_docker_compose_service!=""} > 0.85
+        expr: (container_memory_usage_bytes{container_label_com_docker_compose_service=~"service-a|service-b"} / container_spec_memory_limit_bytes{container_label_com_docker_compose_service=~"service-a|service-b"}) * 100 > 85
         for: 5m
         labels:
           severity: warning
+          team: platform
         annotations:
           summary: "High memory usage on {{ $labels.container_label_com_docker_compose_service }}"
           description: "Memory usage is above 85% of limit."
 
-      - alert: ContainerRestarting
-        expr: increase(container_restarts_total{container_label_com_docker_compose_service!=""}[15m]) > 2
+      - alert: HighErrorRate
+        expr: rate(container_network_receive_errors_total{container_label_com_docker_compose_service=~"service-a|service-b"}[5m]) > 0
         for: 5m
         labels:
           severity: warning
+          team: platform
         annotations:
-          summary: "Container {{ $labels.container_label_com_docker_compose_service }} is restarting frequently"
-          description: "Container has restarted multiple times in the last 15 minutes."
+          summary: "Network errors detected on {{ $labels.container_label_com_docker_compose_service }}"
+          description: "Service is experiencing network errors."
+
+      - alert: ContainerRestarting
+        expr: increase(container_restarts_total{container_label_com_docker_compose_service=~"service-a|service-b|nginx"}[15m]) > 2
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Container {{ $labels.container_label_com_docker_compose_service }} is restarting"
+          description: "Container has restarted {{ $value }} times in the last 15 minutes."
+
+      # Disk space alerts
+      - alert: DiskSpaceLow
+        expr: (1 - (container_fs_usage_bytes{device=~"^/dev/sda.*"} / container_fs_limit_bytes{device=~"^/dev/sda.*"})) * 100 < 10
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Low disk space on {{ $labels.device }}"
+          description: "Disk space is below 10%."
+
+      # Business metrics alerts
+      - alert: HighTrafficSpike
+        expr: rate(container_network_receive_bytes_total{container_label_com_docker_compose_service="nginx"}[5m]) > 50e6
+        for: 5m
+        labels:
+          severity: info
+          team: platform
+        annotations:
+          summary: "Traffic spike detected"
+          description: "NGINX is receiving >50MB/s. This might indicate increased load."
+
+      - alert: NoTraffic
+        expr: rate(container_network_receive_bytes_total{container_label_com_docker_compose_service="nginx"}[5m]) == 0
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "No traffic detected"
+          description: "No incoming traffic for 10 minutes. Is this expected?"
 
