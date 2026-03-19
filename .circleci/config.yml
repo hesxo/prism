@@ -26,8 +26,16 @@ commands:
       - run:
           name: Install dependencies
           command: |
-            cd services/service-a && npm ci
-            cd ../service-b && npm ci
+            install_with_fallback() {
+              if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+                npm ci
+              else
+                npm install --no-audit --no-fund
+              fi
+            }
+
+            cd services/service-a && install_with_fallback
+            cd ../service-b && install_with_fallback
   
   run_tests:
     description: "Run tests for all services"

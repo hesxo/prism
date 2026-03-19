@@ -9,7 +9,11 @@ WORKDIR /build
 COPY package*.json ./
 
 # Install all dependencies (including dev)
-RUN npm ci
+RUN if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then \
+      npm ci; \
+    else \
+      npm install --no-audit --no-fund; \
+    fi
 
 # Copy source
 COPY server.js .
@@ -32,7 +36,11 @@ WORKDIR /app
 COPY --from=builder --chown=nodejs:nodejs /build/package*.json ./
 
 # Install only production dependencies
-RUN npm ci --only=production && \
+RUN if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then \
+      npm ci --omit=dev; \
+    else \
+      npm install --omit=dev --no-audit --no-fund; \
+    fi && \
     npm cache clean --force
 
 # Copy app source from builder
