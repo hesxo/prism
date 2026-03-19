@@ -1,0 +1,2 @@
+# Ignored vulnerabilities (with justification)
+# CVE-2023-12345 - False positive, not applicable to our setup

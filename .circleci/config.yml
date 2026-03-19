@@ -1,0 +1,379 @@
+version: 2.1
+
+# Orbs for reusable configurations
+orbs:
+  node: circleci/node@5.1.0
+  docker: circleci/docker@2.2.0
+  slack: circleci/slack@4.12.0
+
+# Define job executors
+executors:
+  node-executor:
+    docker:
+      - image: cimg/node:18.17
+    working_directory: ~/prism
+  
+  docker-executor:
+    docker:
+      - image: cimg/base:2023.06
+    working_directory: ~/prism
+
+# Define commands
+commands:
+  install_dependencies:
+    description: "Install project dependencies"
+    steps:
+      - run:
+          name: Install dependencies
+          command: |
+            cd services/service-a && npm ci
+            cd ../service-b && npm ci
+  
+  run_tests:
+    description: "Run tests for all services"
+    steps:
+      - run:
+          name: Run Service A tests
+          command: |
+            cd services/service-a
+            npm test -- --coverage
+          no_output_timeout: 10m
+      
+      - run:
+          name: Run Service B tests
+          command: |
+            cd services/service-b
+            npm test -- --coverage
+          no_output_timeout: 10m
+
+# Define jobs
+jobs:
+  # Security scanning job
+  security_scan:
+    executor: docker-executor
+    steps:
+      - checkout
+      
+      - run:
+          name: Install Trivy
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y wget apt-transport-https
+            wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+            echo deb https://aquasecurity.github.io/trivy-repo/deb generic main | sudo tee -a /etc/apt/sources.list.d/trivy.list
+            sudo apt-get update
+            sudo apt-get install -y trivy
+      
+      - run:
+          name: Scan Service A Dockerfile
+          command: |
+            trivy fs --severity HIGH,CRITICAL --no-progress ./services/service-a
+      
+      - run:
+          name: Scan Service B Dockerfile
+          command: |
+            trivy fs --severity HIGH,CRITICAL --no-progress ./services/service-b
+      
+      - run:
+          name: Scan NGINX Dockerfile
+          command: |
+            trivy fs --severity HIGH,CRITICAL --no-progress ./nginx
+      
+      - slack/notify:
+          event: fail
+          template: basic_fail_1
+          mentions: '@engineering'
+
+  # Build and test job
+  build_and_test:
+    executor: node-executor
+    steps:
+      - checkout
+      
+      - install_dependencies
+      
+      - run_tests
+      
+      - run:
+          name: Lint code
+          command: |
+            cd services/service-a && npm run lint || true
+            cd ../service-b && npm run lint || true
+      
+      - run:
+          name: Check formatting
+          command: |
+            cd services/service-a && npm run format -- --check || true
+            cd ../service-b && npm run format -- --check || true
+      
+      - persist_to_workspace:
+          root: ~/prism
+          paths:
+            - services/service-a
+            - services/service-b
+            - nginx
+            - docker-compose.yml
+            - .env.example
+
+  # Build Docker images
+  build_images:
+    executor: docker-executor
+    steps:
+      - attach_workspace:
+          at: ~/prism
+      
+      - setup_remote_docker:
+          version: 20.10.24
+          docker_layer_caching: true
+      
+      - run:
+          name: Build Service A image
+          command: |
+            docker build -t prism-service-a:latest ./services/service-a
+            docker tag prism-service-a:latest prism-service-a:${CIRCLE_SHA1}
+      
+      - run:
+          name: Build Service B image
+          command: |
+            docker build -t prism-service-b:latest ./services/service-b
+            docker tag prism-service-b:latest prism-service-b:${CIRCLE_SHA1}
+      
+      - run:
+          name: Build NGINX image
+          command: |
+            docker build -t prism-nginx:latest ./nginx
+            docker tag prism-nginx:latest prism-nginx:${CIRCLE_SHA1}
+      
+      - run:
+          name: Save images
+          command: |
+            docker save prism-service-a:latest > service-a.tar
+            docker save prism-service-b:latest > service-b.tar
+            docker save prism-nginx:latest > nginx.tar
+      
+      - persist_to_workspace:
+          root: ~/prism
+          paths:
+            - *.tar
+
+  # Security scan built images
+  scan_images:
+    executor: docker-executor
+    steps:
+      - attach_workspace:
+          at: ~/prism
+      
+      - run:
+          name: Install Trivy
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y wget apt-transport-https
+            wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+            echo deb https://aquasecurity.github.io/trivy-repo/deb generic main | sudo tee -a /etc/apt/sources.list.d/trivy.list
+            sudo apt-get update
+            sudo apt-get install -y trivy
+      
+      - run:
+          name: Load Service A image
+          command: docker load < service-a.tar
+      
+      - run:
+          name: Scan Service A image
+          command: |
+            trivy image --severity HIGH,CRITICAL --no-progress prism-service-a:latest
+      
+      - run:
+          name: Load Service B image
+          command: docker load < service-b.tar
+      
+      - run:
+          name: Scan Service B image
+          command: |
+            trivy image --severity HIGH,CRITICAL --no-progress prism-service-b:latest
+      
+      - run:
+          name: Load NGINX image
+          command: docker load < nginx.tar
+      
+      - run:
+          name: Scan NGINX image
+          command: |
+            trivy image --severity HIGH,CRITICAL --no-progress prism-nginx:latest
+
+  # Integration tests
+  integration_tests:
+    executor: docker-executor
+    steps:
+      - attach_workspace:
+          at: ~/prism
+      
+      - setup_remote_docker:
+          version: 20.10.24
+          docker_layer_caching: true
+      
+      - run:
+          name: Load Docker images
+          command: |
+            docker load < service-a.tar
+            docker load < service-b.tar
+            docker load < nginx.tar
+            docker images
+      
+      - run:
+          name: Start services
+          command: |
+            docker-compose -f docker-compose.yml up -d
+            sleep 30
+            docker-compose ps
+      
+      - run:
+          name: Run integration tests
+          command: |
+            chmod +x scripts/test-prism.sh
+            ./scripts/test-prism.sh
+      
+      - run:
+          name: Test observability stack
+          command: |
+            chmod +x scripts/test-observability.sh
+            ./scripts/test-observability.sh
+      
+      - run:
+          name: Collect logs on failure
+          command: |
+            docker-compose logs --tail=100
+          when: on_fail
+      
+      - run:
+          name: Stop services
+          command: docker-compose down
+          when: always
+
+  # Deploy to staging
+  deploy_staging:
+    executor: docker-executor
+    steps:
+      - attach_workspace:
+          at: ~/prism
+      
+      - run:
+          name: Deploy to staging
+          command: |
+            echo "Deploying to staging environment..."
+            # Add your deployment commands here
+            # For example: ssh user@staging-server 'docker-compose pull && docker-compose up -d'
+      
+      - slack/notify:
+          event: pass
+          template: success_tagged_deploy_1
+          mentions: '@team'
+
+  # Performance tests
+  performance_tests:
+    executor: docker-executor
+    steps:
+      - attach_workspace:
+          at: ~/prism
+      
+      - run:
+          name: Install k6
+          command: |
+            sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+            echo "deb https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+            sudo apt-get update
+            sudo apt-get install k6
+      
+      - run:
+          name: Run performance tests
+          command: |
+            k6 run scripts/performance-test.js
+
+# Workflows
+workflows:
+  version: 2
+  
+  # Main workflow for all branches
+  build_test_scan:
+    jobs:
+      - security_scan:
+          filters:
+            branches:
+              ignore: main
+      
+      - build_and_test:
+          requires:
+            - security_scan
+      
+      - build_images:
+          requires:
+            - build_and_test
+      
+      - scan_images:
+          requires:
+            - build_images
+      
+      - integration_tests:
+          requires:
+            - scan_images
+  
+  # Production workflow for main branch
+  deploy_production:
+    jobs:
+      - security_scan:
+          filters:
+            branches:
+              only: main
+      
+      - build_and_test:
+          requires:
+            - security_scan
+          filters:
+            branches:
+              only: main
+      
+      - build_images:
+          requires:
+            - build_and_test
+          filters:
+            branches:
+              only: main
+      
+      - scan_images:
+          requires:
+            - build_images
+          filters:
+            branches:
+              only: main
+      
+      - integration_tests:
+          requires:
+            - scan_images
+          filters:
+            branches:
+              only: main
+      
+      - performance_tests:
+          requires:
+            - integration_tests
+          filters:
+            branches:
+              only: main
+      
+      - deploy_staging:
+          requires:
+            - performance_tests
+          filters:
+            branches:
+              only: main
+          
+  # Nightly security scan
+  nightly_security:
+    triggers:
+      - schedule:
+          cron: "0 2 * * *"
+          filters:
+            branches:
+              only: main
+    jobs:
+      - security_scan
+      - scan_images

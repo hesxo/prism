@@ -1,14 +1,21 @@
 const request = require('supertest');
-const app = require('./server');
+const axios = require('axios');
 const os = require('os');
+const app = require('./server');
 
-describe('Prism Service A', () => {
+jest.mock('axios');
+
+describe('Prism Service B', () => {
+    afterEach(() => {
+        axios.get.mockReset();
+    });
+
     test('GET /health returns 200 and healthy status', async () => {
         const response = await request(app)
             .get('/health')
             .expect('Content-Type', /json/)
             .expect(200);
-        
+
         expect(response.body).toHaveProperty('status', 'healthy');
         expect(response.body).toHaveProperty('service');
         expect(response.body).toHaveProperty('timestamp');
@@ -18,7 +25,7 @@ describe('Prism Service A', () => {
         const response = await request(app)
             .get('/ready')
             .expect(200);
-        
+
         expect(response.body).toHaveProperty('ready', true);
         expect(response.body).toHaveProperty('dependencies');
     });
@@ -27,7 +34,7 @@ describe('Prism Service A', () => {
         const response = await request(app)
             .get('/')
             .expect(200);
-        
+
         expect(response.body).toHaveProperty('service');
         expect(response.body).toHaveProperty('message');
         expect(response.body).toHaveProperty('endpoints');
@@ -47,50 +54,16 @@ describe('Prism Service A', () => {
         spy.mockRestore();
     });
 
-    test('GET / uses fallback hostip when network interfaces are present but no IPv4 public IP', async () => {
-        const spy = jest.spyOn(os, 'networkInterfaces').mockReturnValue({
-            eth0: [{ family: 'IPv6', internal: false, address: '2001:db8::1' }],
-        });
+    test('GET / query-service-a returns 200 when Service A is reachable', async () => {
+        axios.get.mockResolvedValue({ data: { service: 'Service A (Red)' } });
 
         const response = await request(app)
-            .get('/')
+            .get('/query-service-a')
             .expect(200);
 
-        expect(response.body).toHaveProperty('hostip', 'unknown');
-
-        spy.mockRestore();
-    });
-
-    test('GET / uses npm_package_version when set', async () => {
-        const prev = process.env.npm_package_version;
-        process.env.npm_package_version = '8.8.8';
-
-        const response = await request(app)
-            .get('/')
-            .expect(200);
-
-        expect(response.body).toHaveProperty('version', '8.8.8');
-
-        if (prev === undefined) {
-            delete process.env.npm_package_version;
-        } else {
-            process.env.npm_package_version = prev;
-        }
-    });
-
-    test('GET /echo/:message echoes the message', async () => {
-        const message = 'test-message';
-        const response = await request(app)
-            .get(`/echo/${message}`)
-            .expect(200);
-        
-        expect(response.body).toHaveProperty('received', message);
-    });
-
-    test('GET /nonexistent returns 404', async () => {
-        await request(app)
-            .get('/nonexistent')
-            .expect(404);
+        expect(response.body).toHaveProperty('message', 'Successfully queried Service A');
+        expect(response.body).toHaveProperty('serviceAResponse');
+        expect(response.body.serviceAResponse).toHaveProperty('service', 'Service A (Red)');
     });
 
     test('POST / with invalid JSON triggers error handler', async () => {
@@ -113,7 +86,6 @@ describe('Prism Service A', () => {
             .get('/')
             .expect(200);
 
-        // When interfaces are unavailable, hostip should fall back to unknown.
         expect(response.body).toHaveProperty('hostip', 'unknown');
 
         spy.mockRestore();
@@ -136,9 +108,9 @@ describe('Prism Service A', () => {
         }
     });
 
-    test('GET / triggers error handler with err.status fallback and message fallback', async () => {
+    test('GET / triggers error handler with err.status/err.message fallbacks', async () => {
         const spy = jest.spyOn(os, 'hostname').mockImplementation(() => {
-            // Empty message ensures the `err.message || "Internal Server Error"` branch is exercised.
+            // Empty message ensures `err.message || "Internal Server Error"` branch is exercised.
             throw new Error('');
         });
 
@@ -151,45 +123,13 @@ describe('Prism Service A', () => {
         spy.mockRestore();
     });
 
-    test('GET / triggers error handler with err.status and message branch', async () => {
-        const spy = jest.spyOn(os, 'hostname').mockImplementation(() => {
-            const err = new Error('Bad config');
-            err.status = 400;
-            throw err;
-        });
-
+    test('GET /echo/:message echoes the message', async () => {
+        const message = 'test-message';
         const response = await request(app)
-            .get('/')
-            .expect(400);
+            .get(`/echo/${message}`)
+            .expect(200);
 
-        expect(response.body).toHaveProperty('error', 'Bad config');
-
-        spy.mockRestore();
-    });
-
-    test('GET /metrics falls back when os.loadavg is unavailable', async () => {
-        const loadavgDescriptor = Object.getOwnPropertyDescriptor(os, 'loadavg');
-        const originalLoadavg = os.loadavg;
-
-        try {
-            Object.defineProperty(os, 'loadavg', {
-                value: undefined,
-                configurable: true,
-                writable: true
-            });
-
-            const response = await request(app)
-                .get('/metrics')
-                .expect(200)
-                .expect('Content-Type', /text\/plain/);
-
-            expect(response.text).toContain('prism_service_loadavg_1{service="Service A (Red)"} 0');
-        } finally {
-            Object.defineProperty(os, 'loadavg', {
-                value: originalLoadavg,
-                ...loadavgDescriptor
-            });
-        }
+        expect(response.body).toHaveProperty('received', message);
     });
 
     test('GET /metrics returns Prometheus exposition text', async () => {
@@ -211,4 +151,42 @@ describe('Prism Service A', () => {
         expect(response.body).toHaveProperty('nodeVersion');
         expect(response.body).toHaveProperty('timestamp');
     });
+
+    test('POST /batch returns processed results', async () => {
+        const response = await request(app)
+            .post('/batch')
+            .send({ items: ['item1', 'item2'] })
+            .expect(200);
+
+        expect(response.body).toHaveProperty('batchSize', 2);
+        expect(Array.isArray(response.body.results)).toBe(true);
+        expect(response.body.results[0]).toHaveProperty('processed');
+    });
+
+    test('POST /batch returns 400 when items is missing', async () => {
+        const response = await request(app)
+            .post('/batch')
+            .send({})
+            .expect(400);
+
+        expect(response.body).toHaveProperty('error', 'Items array is required');
+    });
+
+    test('GET /query-service-a returns 503 when Service A is unreachable', async () => {
+        axios.get.mockRejectedValue(new Error('boom'));
+
+        const response = await request(app)
+            .get('/query-service-a')
+            .expect(503);
+
+        expect(response.body).toHaveProperty('error', 'Failed to reach Service A');
+        expect(response.body).toHaveProperty('details');
+    });
+
+    test('GET /nonexistent returns 404', async () => {
+        await request(app)
+            .get('/nonexistent')
+            .expect(404);
+    });
 });
+

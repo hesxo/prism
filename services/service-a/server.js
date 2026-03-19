@@ -160,6 +160,7 @@ app.use((req, res) => {
 
 // Start server
 let server;
+/* istanbul ignore next */
 if (require.main === module) {
     server = app.listen(PORT, () => {
         console.log(`${SERVICE_COLOR}✨ ${SERVICE_NAME}${RESET_COLOR} listening on port ${PORT}`);
