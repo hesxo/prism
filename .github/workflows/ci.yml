@@ -31,10 +31,9 @@ jobs:
           output: 'trivy-results.sarif'
       
       - name: Upload Trivy results to GitHub Security
-        if: |
-          github.event_name == 'schedule' ||
-          github.event_name == 'push' ||
-          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+        # Avoid upload attempts on pull_request contexts where the GitHub token can be read-only for security-events.
+        # Uploading on push/scheduled runs is sufficient for centralized security reporting.
+        if: github.event_name == 'schedule' || github.event_name == 'push'
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'trivy-results.sarif'
