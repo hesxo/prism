@@ -8,8 +8,15 @@ on:
   schedule:
     - cron: '0 2 * * *'  # Nightly security scan
 
+permissions:
+  contents: read
+  security-events: write
+
 jobs:
   security-scan:
+    permissions:
+      contents: read
+      security-events: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -24,9 +31,23 @@ jobs:
           output: 'trivy-results.sarif'
       
       - name: Upload Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v2
+        if: |
+          github.event_name == 'schedule' ||
+          github.event_name == 'push' ||
+          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'trivy-results.sarif'
+        # If this still fails due to token scope on some runners, keep the job running
+        # and capture the artifact for manual review.
+        continue-on-error: true
+
+      - name: Upload Trivy SARIF artifact (fallback)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-sarif-fallback
+          path: trivy-results.sarif
 
   build-and-test:
     runs-on: ubuntu-latest
