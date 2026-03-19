@@ -1,0 +1,42 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: service-a
+  namespace: prism
+spec:
+  hosts:
+  - service-a
+  http:
+  - match:
+    - headers:
+        x-canary:
+          exact: "true"
+    route:
+    - destination:
+        host: service-a
+        subset: canary
+      weight: 100
+  - route:
+    - destination:
+        host: service-a
+        subset: stable
+      weight: 90
+    - destination:
+        host: service-a
+        subset: canary
+      weight: 10
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: service-a
+  namespace: prism
+spec:
+  host: service-a
+  subsets:
+  - name: stable
+    labels:
+      version: v1
+  - name: canary
+    labels:
+      track: canary

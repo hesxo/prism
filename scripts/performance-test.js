@@ -94,7 +94,8 @@ export function teardown(data) {
 
   // Generate summary
   console.log('\n=== Test Summary ===');
-  console.log(`Total requests: ${__ITER}`);
+  // k6 does not provide `__ITER` as a global; use the number of recorded samples instead.
+  console.log(`Total requests (samples): ${responseTime.count}`);
   console.log(`Error rate: ${errorRate.value}`);
   console.log(`Avg response time: ${responseTime.avg}ms`);
 }

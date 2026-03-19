@@ -91,6 +91,37 @@ describe('Prism Service B', () => {
         spy.mockRestore();
     });
 
+    test('GET / uses fallback hostip when network interfaces are present but no IPv4 public IP', async () => {
+        const spy = jest.spyOn(os, 'networkInterfaces').mockReturnValue({
+            eth0: [{ family: 'IPv6', internal: false, address: '2001:db8::1' }],
+        });
+
+        const response = await request(app)
+            .get('/')
+            .expect(200);
+
+        expect(response.body).toHaveProperty('hostip', 'unknown');
+
+        spy.mockRestore();
+    });
+
+    test('GET / uses npm_package_version when set', async () => {
+        const prev = process.env.npm_package_version;
+        process.env.npm_package_version = '8.8.8';
+
+        const response = await request(app)
+            .get('/')
+            .expect(200);
+
+        expect(response.body).toHaveProperty('version', '8.8.8');
+
+        if (prev === undefined) {
+            delete process.env.npm_package_version;
+        } else {
+            process.env.npm_package_version = prev;
+        }
+    });
+
     test('GET /version uses npm_package_version when set', async () => {
         const prev = process.env.npm_package_version;
         process.env.npm_package_version = '9.9.9';
@@ -123,6 +154,22 @@ describe('Prism Service B', () => {
         spy.mockRestore();
     });
 
+    test('GET / triggers error handler with err.status and message branch', async () => {
+        const spy = jest.spyOn(os, 'hostname').mockImplementation(() => {
+            const err = new Error('Service down');
+            err.status = 502;
+            throw err;
+        });
+
+        const response = await request(app)
+            .get('/')
+            .expect(502);
+
+        expect(response.body).toHaveProperty('error', 'Service down');
+
+        spy.mockRestore();
+    });
+
     test('GET /echo/:message echoes the message', async () => {
         const message = 'test-message';
         const response = await request(app)
@@ -139,6 +186,31 @@ describe('Prism Service B', () => {
             .expect('Content-Type', /text\/plain/);
 
         expect(response.text).toContain('prism_service_uptime_seconds');
+    });
+
+    test('GET /metrics falls back when os.loadavg is unavailable', async () => {
+        const loadavgDescriptor = Object.getOwnPropertyDescriptor(os, 'loadavg');
+        const originalLoadavg = os.loadavg;
+
+        try {
+            Object.defineProperty(os, 'loadavg', {
+                value: undefined,
+                configurable: true,
+                writable: true
+            });
+
+            const response = await request(app)
+                .get('/metrics')
+                .expect(200)
+                .expect('Content-Type', /text\/plain/);
+
+            expect(response.text).toContain('prism_service_loadavg_1{service="Service B (Blue)"} 0');
+        } finally {
+            Object.defineProperty(os, 'loadavg', {
+                value: originalLoadavg,
+                ...loadavgDescriptor
+            });
+        }
     });
 
     test('GET /version returns version info', async () => {
@@ -189,4 +261,3 @@ describe('Prism Service B', () => {
             .expect(404);
     });
 });
-
